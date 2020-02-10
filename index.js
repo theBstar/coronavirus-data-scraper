@@ -1,34 +1,48 @@
 const express = require('express');
-const rp = require('request-promise');
+const httpRequest = require('request-promise');
 
 const { PORT } = require('./config');
 const { scrapeDataFromHTML } = require('./scraper');
 const InMemoryCache = require('./InMemoryCache');
+const { makeSuccessfullResponse, isDataExpired } = require('./utils');
 const {
   DATA_URL,
-  SUCCESS_STATUS,
+  ERROR_RESPONSE,
 } = require('./constants');
-
 
 const app = express();
 
-app.get('/', async (request, response) => {
-  const resultFromCache = InMemoryCache.getData();
+function buildSuccessResponder(response) {
+  return function sendSuccessResponse(data) {
+    const result = makeSuccessfullResponse(data);
+    response.status(200).json(result);
+  }
+}
 
-  if (resultFromCache.status === SUCCESS_STATUS) {
-    response.status(200).json(resultFromCache);
+
+app.get('/', async (request, response) => {
+  const sendSuccessResponse = buildSuccessResponder(response);
+  const resultFromCache = InMemoryCache.getData();
+  if (resultFromCache && !isDataExpired(resultFromCache)) {
+    sendSuccessResponse(resultFromCache);
     return;
   }
 
-  rp(DATA_URL)
+  httpRequest(DATA_URL)
     .then(function (html) {
       const resultSet = scrapeDataFromHTML(html);
+      if (!resultSet) throw Error('Could not scrape the data');
       InMemoryCache.setData(resultSet);
-      response.status(200).json(InMemoryCache.getData());
+      sendSuccessResponse(InMemoryCache.getData());
       return;
     })
     .catch(function (e) {
-      response.status(500).json(InMemoryCache.getData());
+      const resultFromCache = InMemoryCache.getData();
+      if (resultFromCache) {
+        sendSuccessResponse(resultFromCache);
+        return;
+      }
+      response.status(500).json(ERROR_RESPONSE);
       return;
     });
 });
